@@ -19,6 +19,8 @@ export interface HelperLike {
   readonly status: HelperStatus;
   send(command: HelperCommand): void;
   onNotice(listener: (notice: HelperNotice) => void): () => void;
+  /** Stops the helper. */
+  dispose(): void;
 }
 
 /**
@@ -54,14 +56,19 @@ export function helperArguments(launch: HelperLaunch): string[] {
   return args;
 }
 
-/** Folds per-model download progress into one percentage. */
+/** Folds per-model download progress into one percentage that never moves backwards. */
 export class LoadProgress {
   private readonly fractions = new Map<string, number>();
+  private readonly expectedModels: number;
+
+  constructor(expectedModels: number) {
+    this.expectedModels = expectedModels;
+  }
 
   update(model: string, fraction: number): number {
     this.fractions.set(model, Math.min(1, Math.max(0, fraction)));
-    const values = [...this.fractions.values()];
-    return Math.floor((values.reduce((sum, value) => sum + value, 0) / values.length) * 100);
+    const total = [...this.fractions.values()].reduce((sum, value) => sum + value, 0);
+    return Math.floor((total / Math.max(this.expectedModels, this.fractions.size)) * 100);
   }
 }
 
@@ -78,19 +85,23 @@ export class MissingHelper implements HelperLike {
   onNotice(): () => void {
     return () => {};
   }
+
+  dispose(): void {}
 }
 
 /** The native helper process, speaking JSON lines. Starts loading models immediately. */
 export class HelperProcess implements HelperLike {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly listeners = new Set<(notice: HelperNotice) => void>();
-  private readonly progress = new LoadProgress();
+  private readonly progress: LoadProgress;
   private readonly killOnExit = () => this.child.kill();
   private currentStatus: HelperStatus = { state: "loading", percent: undefined };
   private lastFatal: string | undefined;
   private stderrTail = "";
 
   constructor(launch: HelperLaunch) {
+    // The final model always loads; the streaming one only for the live preview.
+    this.progress = new LoadProgress(launch.livePreview ? 2 : 1);
     this.child = spawn(launch.binary, helperArguments(launch), { stdio: "pipe" });
     process.once("exit", this.killOnExit);
 

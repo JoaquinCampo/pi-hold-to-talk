@@ -81,11 +81,39 @@ test("Escape cancels without inserting anything", () => {
   assert.deepEqual(lastView(), { kind: "hidden" });
 });
 
-test("another key finishes the hold and still reaches the editor", () => {
-  const { helper, holdSpace, type } = setup();
+test("another key finishes the hold and is typed after the transcript", () => {
+  const { helper, editor, holdSpace, type } = setup();
   holdSpace(1000);
-  assert.equal(type("x"), undefined);
+  assert.deepEqual(type("!"), { consume: true });
   assert.deepEqual(helper.sent, ["start", "stop"]);
+  helper.emit({ type: "final", text: "Ship it", audioMs: 1000, transcribeMs: 50 });
+  assert.equal(editor?.text, "Please Ship it!");
+});
+
+test("Enter pressed before the transcript lands sends the whole prompt", () => {
+  const { helper, editor, holdSpace, type } = setup();
+  holdSpace(1000);
+  mock.timers.tick(450);
+  assert.deepEqual(type("\r"), { consume: true }, "held back while transcribing");
+  assert.deepEqual(editor?.submitted, []);
+  helper.emit({ type: "final", text: "Fix the header.", audioMs: 1000, transcribeMs: 50 });
+  assert.deepEqual(editor?.submitted, ["Please Fix the header."]);
+});
+
+test("Escape while polishing drops the dictation but keeps typed keys", async () => {
+  let finishPolish: (text: string) => void = () => {};
+  const polish = () => new Promise<string>((resolve) => (finishPolish = resolve));
+  const { helper, editor, holdSpace, type, lastView } = setup({ polish });
+  holdSpace(1000);
+  mock.timers.tick(450);
+  helper.emit({ type: "final", text: "um fix it", audioMs: 1000, transcribeMs: 50 });
+  type("x");
+  assert.deepEqual(type("\x1b"), { consume: true });
+  assert.equal(editor?.text, "Please x");
+  assert.deepEqual(lastView(), { kind: "hidden" });
+  finishPolish("Fix it.");
+  await new Promise(setImmediate);
+  assert.equal(editor?.text, "Please x", "a late polish result is ignored");
 });
 
 test("does nothing when the editor does not have focus", () => {

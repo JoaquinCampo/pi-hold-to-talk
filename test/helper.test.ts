@@ -59,11 +59,11 @@ test("prefers an override, then a local build, then the shipped binary", () => {
   assert.equal(findHelper(["/nope"]), undefined);
 });
 
-test("combines per-model progress", () => {
-  const progress = new LoadProgress();
-  assert.equal(progress.update("a", 0.5), 50);
-  assert.equal(progress.update("b", 0), 25);
-  assert.equal(progress.update("b", 1.5), 75, "fractions are clamped");
+test("combines per-model progress without moving backwards", () => {
+  const progress = new LoadProgress(2);
+  assert.equal(progress.update("a", 1), 50, "the second model counts before it reports");
+  assert.equal(progress.update("b", 0), 50);
+  assert.equal(progress.update("b", 1.5), 100, "fractions are clamped");
 });
 
 test("talks to a helper process", async () => {

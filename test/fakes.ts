@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import type { DictationTarget } from "../src/editor.ts";
 import type { HelperLike, HelperNotice, HelperStatus } from "../src/helper.ts";
 import type { HelperCommand } from "../src/protocol.ts";
@@ -26,10 +25,20 @@ export class FakeEditor implements DictationTarget {
     this.col += text.length;
   }
 
+  /** Prompts sent with Enter. */
+  readonly submitted: string[] = [];
+
   handleInput(data: string): void {
-    assert.equal(data, "\x7f", "only Backspace is sent");
-    this.text = this.text.slice(0, this.col - 1) + this.text.slice(this.col);
-    this.col -= 1;
+    if (data === "\x7f") {
+      this.text = this.text.slice(0, this.col - 1) + this.text.slice(this.col);
+      this.col -= 1;
+    } else if (data === "\r") {
+      this.submitted.push(this.text);
+      this.text = "";
+      this.col = 0;
+    } else {
+      this.insertTextAtCursor(data);
+    }
   }
 
   render(): string[] {
@@ -55,6 +64,8 @@ export class FakeHelper implements HelperLike {
       this.listener = undefined;
     };
   }
+
+  dispose(): void {}
 
   emit(notice: HelperNotice): void {
     this.listener?.(notice);

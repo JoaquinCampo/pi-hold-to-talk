@@ -16,38 +16,53 @@ const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 const CONFIG_FILE = "hold-to-talk.json";
 const USAGE = "Usage: /hold-to-talk [on|off|status|setup]";
 
+/**
+ * The helper outlives a single extension instance: Pi re-creates extensions for /new, /resume
+ * and /fork, and the models take a moment to load. It lives here, one per Pi process, and is
+ * stopped on /reload (which may bring new settings) and on quit.
+ */
+const shared = globalThis as { [key: symbol]: { helper: HelperLike | undefined } | undefined };
+const REGISTRY = Symbol.for("pi-hold-to-talk");
+
 export default function holdToTalk(pi: ExtensionAPI): void {
   const configFile = path.join(getAgentDir(), CONFIG_FILE);
   const { config, problems } = loadConfig(configFile);
   const timing = readKeyRepeat().then(([keyRepeat, initial]) => holdTiming(keyRepeat, initial));
-  let enabled = config.enabled && process.platform === "darwin";
-  // One helper per Pi process, started by the first interactive session and kept across /new and /resume.
-  let helper: (HelperLike & { dispose?(): void }) | undefined;
-  let session: { dictation: Dictation; dispose(): void } | undefined;
+  const registry = (shared[REGISTRY] ??= { helper: undefined });
+  let enabled = config.enabled;
+  let session: Session | undefined;
   let warned = false;
 
   const startHelper = (): HelperLike => {
     const binary = findHelper(helperCandidates(PACKAGE_ROOT, config.helperPath));
-    helper = binary
+    registry.helper = binary
       ? new HelperProcess({ binary, ...config })
       : new MissingHelper("The speech helper is not installed. Run /hold-to-talk setup.");
-    return helper;
+    return registry.helper;
+  };
+
+  const open = async (ctx: ExtensionContext, helper: HelperLike) => {
+    session?.dispose();
+    session = attach(ctx, helper, config, await timing);
+    session.dictation.enabled = enabled;
   };
 
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.mode !== "tui" || process.platform !== "darwin") return;
-    session?.dispose();
     if (!warned) {
       warned = true;
       for (const problem of problems) ctx.ui.notify(`hold-to-talk: ${problem} (${configFile})`, "warning");
     }
-    session = attach(ctx, helper ?? startHelper(), config, await timing);
-    session.dictation.enabled = enabled;
+    await open(ctx, registry.helper ?? startHelper());
   });
 
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", (event) => {
     session?.dispose();
     session = undefined;
+    if (event.reason === "reload" || event.reason === "quit") {
+      registry.helper?.dispose();
+      registry.helper = undefined;
+    }
   });
 
   pi.registerCommand("hold-to-talk", {
@@ -63,18 +78,13 @@ export default function holdToTalk(pi: ExtensionAPI): void {
           return;
         case "":
         case "status":
-          ctx.ui.notify(describeStatus(enabled, helper, config, configFile), "info");
+          ctx.ui.notify(describeStatus(enabled, registry.helper, config, configFile), "info");
           return;
         case "setup":
-          await setup(ctx, () => {
-            helper?.dispose?.();
-            const fresh = startHelper();
-            if (session) {
-              session.dispose();
-              session = undefined;
-            }
-            return fresh;
-          });
+          if (await buildHelper(ctx)) {
+            registry.helper?.dispose();
+            await open(ctx, startHelper());
+          }
           return;
         default:
           ctx.ui.notify(USAGE, "warning");
@@ -83,8 +93,13 @@ export default function holdToTalk(pi: ExtensionAPI): void {
   });
 }
 
+interface Session {
+  dictation: Dictation;
+  dispose(): void;
+}
+
 /** Wires dictation into one interactive session. */
-function attach(ctx: ExtensionContext, helper: HelperLike, config: HoldToTalkConfig, timing: HoldTiming) {
+function attach(ctx: ExtensionContext, helper: HelperLike, config: HoldToTalkConfig, timing: HoldTiming): Session {
   const widget = new WidgetHost(ctx.ui);
   const dictation = new Dictation(
     helper,
@@ -125,17 +140,17 @@ function polisher(ctx: ExtensionContext, config: HoldToTalkConfig): ((raw: strin
   };
 }
 
-/** Builds the helper from source with SwiftPM, then restarts it. */
-async function setup(ctx: ExtensionContext, restart: () => HelperLike): Promise<void> {
+/** Builds the helper from source with SwiftPM. */
+async function buildHelper(ctx: ExtensionContext): Promise<boolean> {
   ctx.ui.notify("hold-to-talk: building the speech helper (a few minutes the first time)…", "info");
   const result = await run("swift", ["build", "-c", "release", "--package-path", path.join(PACKAGE_ROOT, "helper")]);
   if (!result.ok) {
     const hint = result.missing ? "Install the Xcode command line tools with `xcode-select --install`." : result.output;
     ctx.ui.notify(`hold-to-talk: build failed. ${hint}`, "error");
-    return;
+    return false;
   }
-  restart();
-  ctx.ui.notify("hold-to-talk: helper built. Models download on first use (about 1.5 GB). Start a new session or /reload to dictate.", "info");
+  ctx.ui.notify("hold-to-talk: helper built. The models download now if they are not on disk yet (about 1.2 GB).", "info");
+  return true;
 }
 
 function run(command: string, args: string[]): Promise<{ ok: boolean; missing: boolean; output: string }> {

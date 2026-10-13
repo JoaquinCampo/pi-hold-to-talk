@@ -1,7 +1,7 @@
 import { type DictationTarget, eraseSpacesBeforeCursor, insertDictation } from "./editor.ts";
 import type { HelperLike, HelperNotice } from "./helper.ts";
 import { HoldDetector, type HoldTiming } from "./hold-detector.ts";
-import { classifyKey } from "./keys.ts";
+import { classifyKey, type KeyEvent } from "./keys.ts";
 import { METER_WIDTH, type View } from "./widget.ts";
 
 export interface DictationUI {
@@ -24,7 +24,7 @@ type Phase =
   | { name: "waiting"; target: DictationTarget }
   | { name: "listening"; target: DictationTarget; live: boolean; startedAt: number; levels: number[]; preview: string }
   | { name: "transcribing"; target: DictationTarget }
-  | { name: "polishing"; target: DictationTarget; raw: string };
+  | { name: "polishing"; target: DictationTarget };
 
 const NOTICE_MS = 2500;
 const consume = { consume: true } as const;
@@ -32,10 +32,15 @@ const consume = { consume: true } as const;
 /**
  * Turns a held Space into dictation: listen while held, transcribe on release, optionally
  * polish, then insert at the cursor of the editor that had focus when the hold began.
+ *
+ * Keys typed between the end of a hold and the insertion (most often Enter, to send the
+ * prompt) are held back and replayed after the text lands, so they act on the full prompt.
  */
 export class Dictation {
   enabled = true;
   private phase: Phase = { name: "idle" };
+  /** Raw input held back while the transcript is on its way. */
+  private heldKeys: string[] = [];
   private readonly detector: HoldDetector;
   private readonly unsubscribe: () => void;
   private releaseTimer: NodeJS.Timeout | undefined;
@@ -55,12 +60,17 @@ export class Dictation {
 
   /** Terminal input handler. Consumes the keys that drive a hold; everything else passes through. */
   handleInput(data: string): { consume: true } | undefined {
+    const key = classifyKey(data);
+    if (this.phase.name === "transcribing" || this.phase.name === "polishing") {
+      return this.whileBusy(this.phase.target, data, key);
+    }
+
     const holding = this.detector.isHolding;
     if (!holding && (!this.enabled || this.phase.name !== "idle")) return undefined;
     const target = holding ? undefined : this.ui.focusedTarget();
     if (!holding && !target) return undefined;
 
-    const verdict = this.detector.feed(classifyKey(data), Date.now());
+    const verdict = this.detector.feed(key, Date.now());
     switch (verdict.action) {
       case "pass":
         return undefined;
@@ -80,8 +90,9 @@ export class Dictation {
         this.cancel();
         return consume;
       case "finish":
+        this.heldKeys.push(data);
         this.finish();
-        return undefined;
+        return consume;
     }
   }
 
@@ -90,8 +101,17 @@ export class Dictation {
     if (this.phase.name === "listening") this.helper.send({ type: "cancel" });
     this.clearTimers();
     this.detector.end();
+    this.heldKeys = [];
     this.phase = { name: "idle" };
     this.ui.show({ kind: "hidden" });
+  }
+
+  /** Between release and insertion: Escape drops the dictation, other keys wait for it. */
+  private whileBusy(target: DictationTarget, data: string, key: KeyEvent): { consume: true } | undefined {
+    if (key.phase === "release") return undefined;
+    if (key.key === "escape") this.settle(target, undefined);
+    else this.heldKeys.push(data);
+    return consume;
   }
 
   private begin(target: DictationTarget): void {
@@ -126,14 +146,25 @@ export class Dictation {
       this.phase = { name: "transcribing", target: this.phase.target };
       this.ui.show({ kind: "transcribing" });
     } else if (this.phase.name === "waiting") {
-      this.reset();
+      this.settle(this.phase.target, undefined);
     }
   }
 
   private cancel(): void {
     this.clearTimers();
     if (this.phase.name === "listening") this.helper.send({ type: "cancel" });
-    this.reset();
+    if (this.phase.name === "listening" || this.phase.name === "waiting") this.settle(this.phase.target, undefined);
+  }
+
+  /** Something went wrong mid-dictation: drop it, keep what the user typed. */
+  private abandon(message: string): void {
+    this.clearTimers();
+    this.detector.end();
+    const phase = this.phase;
+    if (phase.name === "listening" || phase.name === "transcribing" || phase.name === "waiting") {
+      this.settle(phase.target, undefined);
+    }
+    this.ui.notify(message, "error");
   }
 
   private receive(notice: HelperNotice): void {
@@ -171,20 +202,16 @@ export class Dictation {
       case "cancelled":
         break;
       case "error":
-        if (notice.code === "bad_command") break;
+        if (notice.code === "bad_command" || notice.code === "invalid_state") break;
         if (phase.name === "listening" || phase.name === "transcribing") {
-          this.clearTimers();
-          this.detector.end();
-          this.reset();
+          this.abandon(describeError(notice.code, notice.message));
+        } else {
+          this.ui.notify(describeError(notice.code, notice.message), "error");
         }
-        if (notice.code !== "invalid_state") this.ui.notify(describeError(notice.code, notice.message), "error");
         break;
       case "exit":
-        if (phase.name !== "idle" && phase.name !== "polishing") {
-          this.clearTimers();
-          this.detector.end();
-          this.reset();
-          this.ui.notify(`Dictation stopped: ${notice.message}`, "error");
+        if (phase.name === "listening" || phase.name === "transcribing" || phase.name === "waiting") {
+          this.abandon(`Dictation stopped: ${notice.message}`);
         }
         break;
     }
@@ -192,22 +219,33 @@ export class Dictation {
 
   private async deliver(target: DictationTarget, raw: string): Promise<void> {
     if (raw === "") {
-      this.reset();
+      this.settle(target, undefined);
       this.notice("Didn't catch that");
       return;
     }
+    if (!this.options.polish) return this.settle(target, raw);
+
+    const phase: Phase = { name: "polishing", target };
+    this.phase = phase;
+    this.ui.show({ kind: "polishing", text: raw });
     let text = raw;
-    if (this.options.polish) {
-      this.phase = { name: "polishing", target, raw };
-      this.ui.show({ kind: "polishing", text: raw });
-      try {
-        text = await this.options.polish(raw);
-      } catch {
-        // Polishing is a nicety: on failure or timeout the raw transcript goes in.
-      }
+    try {
+      text = await this.options.polish(raw);
+    } catch {
+      // Polishing is a nicety: on failure or timeout the raw transcript goes in.
     }
-    insertDictation(target, text);
-    this.reset();
+    // Escape while polishing already settled this dictation.
+    if (this.phase === phase) this.settle(target, text);
+  }
+
+  /** Ends a dictation: inserts `text` if any, then replays the keys typed while waiting for it. */
+  private settle(target: DictationTarget, text: string | undefined): void {
+    this.phase = { name: "idle" };
+    this.ui.show({ kind: "hidden" });
+    if (text !== undefined) insertDictation(target, text);
+    const keys = this.heldKeys;
+    this.heldKeys = [];
+    for (const data of keys) target.handleInput(data);
   }
 
   private loadingPercent(): number | undefined {
@@ -233,11 +271,6 @@ export class Dictation {
     this.noticeTimer = setTimeout(() => {
       if (this.phase.name === "idle") this.ui.show({ kind: "hidden" });
     }, NOTICE_MS);
-  }
-
-  private reset(): void {
-    this.phase = { name: "idle" };
-    this.ui.show({ kind: "hidden" });
   }
 
   private armRelease(): void {
