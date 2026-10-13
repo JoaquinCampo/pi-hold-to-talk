@@ -1,10 +1,18 @@
 {
   "name": "pi-hold-to-talk",
   "version": "0.1.0",
-  "description": "Hold Space to dictate into Pi. On-device speech recognition on Apple Silicon, with a live preview and optional cleanup by a model of your choice.",
+  "description": "Hold Space to dictate into Pi. Fully local speech recognition on Apple Silicon, with live words in the prompt and a near-instant final pass.",
   "type": "module",
   "license": "MIT",
   "author": "Joaquin Campo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoaquinCampo/pi-hold-to-talk.git"
+  },
+  "homepage": "https://github.com/JoaquinCampo/pi-hold-to-talk#readme",
+  "bugs": {
+    "url": "https://github.com/JoaquinCampo/pi-hold-to-talk/issues"
+  },
   "keywords": [
     "pi-package",
     "pi",
