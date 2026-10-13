@@ -53,7 +53,8 @@ actor Session {
             return events.emit(.error(code: .microphoneUnavailable, message: "\(error)", fatal: false))
         }
 
-        await transcriber.begin()
+        // Open the microphone first: people start talking right away, and the stream buffers
+        // whatever arrives while the streaming model resets.
         let (stream, input) = AsyncStream.makeStream(of: [Float].self)
         do {
             try await source.start { input.yield($0) }
@@ -62,6 +63,7 @@ actor Session {
             let code: ErrorCode = if case AudioSourceError.microphoneDenied = error { .microphoneDenied } else { .microphoneUnavailable }
             return events.emit(.error(code: code, message: "\(error)", fatal: false))
         }
+        await transcriber.begin()
         recording = Recording(source: source, input: input, pump: pump(stream))
         events.emit(.listening)
     }

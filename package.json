@@ -1,0 +1,61 @@
+{
+  "name": "pi-hold-to-talk",
+  "version": "0.1.0",
+  "description": "Hold Space to dictate into Pi. On-device speech recognition on Apple Silicon, with a live preview and optional cleanup by a model of your choice.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Joaquin Campo",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "pi-extension",
+    "dictation",
+    "voice",
+    "speech-to-text",
+    "push-to-talk",
+    "macos"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "files": [
+    "src",
+    "bin",
+    "helper/Package.swift",
+    "helper/Package.resolved",
+    "helper/Sources",
+    "scripts/build-helper.sh",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:helper": "scripts/build-helper.sh",
+    "prepack": "scripts/build-helper.sh",
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "npm run typecheck && npm test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.1.0",
+    "@earendil-works/pi-tui": "^1.1.0",
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3"
+  }
+}
