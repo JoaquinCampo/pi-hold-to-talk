@@ -113,7 +113,7 @@ The helper is a Swift package in `helper/`. FluidAudio is pinned to an exact rev
 ## Credits and licenses
 
 - This package: MIT.
-- [FluidAudio](https://github.com/FluidInference/FluidAudio): Apache 2.0.
+- [FluidAudio](https://github.com/FluidInference/FluidAudio): Apache 2.0. The prebuilt helper includes it; its license and the notices it carries are in [`licenses/`](licenses/).
 - Parakeet Ultra ([CoreML conversion](https://huggingface.co/FluidInference/parakeet-ultra-coreml)): CC BY 4.0.
 - Nemotron 3.5 ASR Streaming ([CoreML conversion](https://huggingface.co/FluidInference/Nemotron-3.5-ASR-Streaming-Multilingual-0.6b-CoreML)): OpenMDW 1.1.
 

@@ -48,7 +48,8 @@
     "scripts/build-helper.sh",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "licenses"
   ],
   "scripts": {
     "build:helper": "scripts/build-helper.sh",
