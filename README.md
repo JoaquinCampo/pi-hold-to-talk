@@ -2,13 +2,7 @@
 
 Hold Space to dictate into [Pi](https://pi.dev). Words appear in the prompt as you speak, grayed out while they are provisional. When you let go, a more accurate pass over the whole recording replaces them, in about a tenth of a second. Everything runs on your Mac.
 
-[Watch the 10-second demo](https://github.com/JoaquinCampo/pi-hold-to-talk/releases/download/v0.1.0/pi-hold-to-talk-demo.mp4)
-
-```
- ● 0:07 ▅▆▅▇▆▄▆▆  release Space to finish · Esc to cancel
-──────────────────────────────────────────────────────────────────────────────
-  Please look at the header and make it take less vertical space. Also check
-```
+[![Holding Space in Pi: gray live words while speaking, then the corrected final text](https://raw.githubusercontent.com/JoaquinCampo/pi-hold-to-talk/main/docs/demo.gif)](https://github.com/JoaquinCampo/pi-hold-to-talk/releases/download/v0.1.0/pi-hold-to-talk-demo.mp4)
 
 - **Fully local.** Audio and text never leave your machine. Two NVIDIA models run on the Apple Neural Engine through [FluidAudio](https://github.com/FluidInference/FluidAudio):
   - **Nemotron 3.5 Streaming** writes the live words;
