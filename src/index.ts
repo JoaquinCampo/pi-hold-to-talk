@@ -106,6 +106,7 @@ function attach(ctx: ExtensionContext, helper: HelperLike, config: HoldToTalkCon
       show: (view) => widget.show(view),
       notify: (message, type) => ctx.ui.notify(message, type),
       focusedTarget: () => asDictationTarget(widget.focused()),
+      provisional: (text) => ctx.ui.theme.fg("dim", text),
     },
     { timing, maxSeconds: config.maxSeconds, livePreview: config.livePreview },
   );

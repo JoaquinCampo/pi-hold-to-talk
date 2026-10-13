@@ -2,6 +2,7 @@ import { type DictationTarget, eraseSpacesBeforeCursor, LiveText } from "./edito
 import type { HelperLike, HelperNotice } from "./helper.ts";
 import { HoldDetector, type HoldTiming } from "./hold-detector.ts";
 import { classifyKey } from "./keys.ts";
+import { restoreQuestionMarks } from "./questions.ts";
 import { METER_WIDTH, type View } from "./widget.ts";
 
 export interface DictationUI {
@@ -9,6 +10,8 @@ export interface DictationUI {
   notify(message: string, type: "info" | "warning" | "error"): void;
   /** The editor with keyboard focus, or undefined when something else (a dialog, an overlay) has it. */
   focusedTarget(): DictationTarget | undefined;
+  /** Styles dictated text that the final pass may still change. */
+  provisional(text: string): string;
 }
 
 export interface DictationOptions {
@@ -31,8 +34,8 @@ const TRAILING_REPEAT_MS = 150;
 const consume = { consume: true } as const;
 
 /**
- * Turns a held Space into dictation. While Space is held, live words appear at the cursor;
- * on release the final transcript replaces them.
+ * Turns a held Space into dictation. While Space is held, live words appear at the cursor,
+ * styled as provisional; on release the final transcript replaces them.
  *
  * Keys typed before the final transcript lands (most often Enter, to send the prompt) are
  * held back and replayed afterwards, so they act on the finished prompt.
@@ -109,6 +112,7 @@ export class Dictation {
   dispose(): void {
     this.unsubscribe();
     if (this.phase.name === "listening") this.helper.send({ type: "cancel" });
+    if (this.phase.name === "listening" || this.phase.name === "transcribing") this.phase.text.commit();
     this.clearTimers();
     this.detector.end();
     this.heldKeys = [];
@@ -135,7 +139,7 @@ export class Dictation {
 
   private listen(target: DictationTarget): void {
     this.helper.send({ type: "start" });
-    const text = new LiveText(target);
+    const text = new LiveText(target, (shown) => this.ui.provisional(shown));
     this.phase = { name: "listening", target, text, micOpen: false, startedAt: Date.now(), levels: [] };
     this.render();
   }
@@ -205,7 +209,7 @@ export class Dictation {
         if (phase.name === "listening" && this.options.livePreview) phase.text.update(notice.text);
         break;
       case "final":
-        if (phase.name === "transcribing") this.deliver(phase.text, notice.text);
+        if (phase.name === "transcribing") this.deliver(phase.text, restoreQuestionMarks(notice.text));
         break;
       case "cancelled":
         break;
@@ -235,6 +239,7 @@ export class Dictation {
   private settle(): void {
     const phase = this.phase;
     this.phase = { name: "idle" };
+    if (phase.name === "listening" || phase.name === "transcribing") phase.text.commit();
     this.ui.show({ kind: "hidden" });
     const keys = this.heldKeys;
     this.heldKeys = [];

@@ -16,7 +16,7 @@ function setup(options: Partial<DictationOptions> = {}, editor: FakeEditor | nul
   const notices: string[] = [];
   const dictation = new Dictation(
     helper,
-    { show: (view) => views.push(view), notify: (message) => notices.push(message), focusedTarget: () => editor ?? undefined },
+    { show: (view) => views.push(view), notify: (message) => notices.push(message), focusedTarget: () => editor ?? undefined, provisional: (text) => `<${text}>` },
     { timing: holdTiming(), maxSeconds: 300, livePreview: true, ...options },
   );
   /** Sends raw input like the terminal would, applying unconsumed keys to the editor. */

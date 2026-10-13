@@ -1,4 +1,5 @@
 import type { Component } from "@earendil-works/pi-tui";
+import { dimBeforeCursor } from "./dim.ts";
 
 /**
  * The parts of pi-tui's `Editor` that dictation uses. Going through the focused editor
@@ -10,6 +11,7 @@ export interface DictationTarget {
   getCursor(): { line: number; col: number };
   insertTextAtCursor(text: string): void;
   handleInput(data: string): void;
+  render(width: number): string[];
 }
 
 const BACKSPACE = "\x7f";
@@ -26,7 +28,8 @@ export function asDictationTarget(component: Component | null | undefined): Dict
     typeof candidate.getLines === "function" &&
     typeof candidate.getCursor === "function" &&
     typeof candidate.insertTextAtCursor === "function" &&
-    typeof candidate.handleInput === "function";
+    typeof candidate.handleInput === "function" &&
+    typeof candidate.render === "function";
   return usable ? (component as unknown as DictationTarget) : undefined;
 }
 
@@ -47,17 +50,22 @@ export function eraseSpacesBeforeCursor(target: DictationTarget, count: number):
  * live words while speaking, then the final transcript.
  * Each update edits only what changed. Once the editor no longer ends with this text at
  * the cursor (the person moved on), updates are refused and the text is left alone.
+ *
+ * Given a `paint` function, the text is drawn with it until `commit()`, marking it as
+ * provisional. This wraps the editor's `render` for that time.
  */
 export class LiveText {
   private readonly target: DictationTarget;
   /** A space that keeps the dictation off a word right before it. Part of the span. */
   private readonly separator: string;
   private shown = "";
+  private unwrap: (() => void) | undefined;
 
-  constructor(target: DictationTarget) {
+  constructor(target: DictationTarget, paint?: (text: string) => string) {
     this.target = target;
     const before = textBeforeCursor(target);
     this.separator = before !== "" && !/\s$/.test(before) ? " " : "";
+    if (paint) this.unwrap = wrapRender(target, (lines) => (this.intact ? dimBeforeCursor(lines, this.shown, paint) : lines));
   }
 
   /** The dictated text currently in the editor, without the separator. */
@@ -84,4 +92,32 @@ export class LiveText {
     this.shown = next;
     return true;
   }
+
+  /** The text is final: draw it like the rest of the prompt. */
+  commit(): void {
+    this.unwrap?.();
+    this.unwrap = undefined;
+  }
+}
+
+/**
+ * Passes the target's rendered lines through `transform` until the returned function is
+ * called. If something else wrapped `render` in the meantime, that wrapper stays in place
+ * and ours becomes a pass-through.
+ */
+function wrapRender(target: DictationTarget, transform: (lines: string[]) => string[]): () => void {
+  const hadOwn = Object.hasOwn(target, "render");
+  const original = target.render;
+  let active = true;
+  const wrapped = (width: number) => {
+    const lines = original.call(target, width);
+    return active ? transform(lines) : lines;
+  };
+  target.render = wrapped;
+  return () => {
+    active = false;
+    if (target.render !== wrapped) return;
+    if (hadOwn) target.render = original;
+    else delete (target as Partial<DictationTarget>).render;
+  };
 }

@@ -1,3 +1,4 @@
+import { CURSOR_MARKER } from "@earendil-works/pi-tui";
 import type { DictationTarget } from "../src/editor.ts";
 import type { HelperLike, HelperNotice, HelperStatus } from "../src/helper.ts";
 import type { HelperCommand } from "../src/protocol.ts";
@@ -45,8 +46,9 @@ export class FakeEditor implements DictationTarget {
     }
   }
 
+  /** One line with the cursor marker, as pi-tui's Editor draws it when focused. */
   render(): string[] {
-    return [this.text];
+    return [this.text.slice(0, this.col) + CURSOR_MARKER + this.text.slice(this.col)];
   }
 
   invalidate(): void {}

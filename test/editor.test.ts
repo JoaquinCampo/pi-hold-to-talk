@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { asDictationTarget, eraseSpacesBeforeCursor, LiveText } from "../src/editor.ts";
+import { CURSOR_MARKER } from "@earendil-works/pi-tui";
 import { FakeEditor } from "./fakes.ts";
 
 test("recognises editor-like components only", () => {
@@ -59,4 +60,24 @@ test("live text deletes whole characters", () => {
   live.update("café 👍🏽");
   live.update("café");
   assert.equal(editor.text, "café");
+});
+
+test("live text is painted until committed, then drawn plainly", () => {
+  const editor = new FakeEditor("Note:");
+  const live = new LiveText(editor, (text) => `<${text}>`);
+  live.update("check this");
+  assert.deepEqual(editor.render(), [`Note: <check this>${CURSOR_MARKER}`]);
+  live.commit();
+  assert.deepEqual(editor.render(), [`Note: check this${CURSOR_MARKER}`]);
+  assert.equal(Object.hasOwn(editor, "render"), false, "the editor's own render is back");
+});
+
+test("committing leaves a later render wrapper in place", () => {
+  const editor = new FakeEditor();
+  const live = new LiveText(editor, (text) => `<${text}>`);
+  live.update("hi");
+  const outer = editor.render;
+  editor.render = () => outer.call(editor).map((line) => `[${line}]`);
+  live.commit();
+  assert.deepEqual(editor.render(), [`[hi${CURSOR_MARKER}]`]);
 });

@@ -1,6 +1,6 @@
 # pi-hold-to-talk
 
-Hold Space to dictate into [Pi](https://pi.dev). Words appear in the prompt as you speak. When you let go, a more accurate pass over the whole recording replaces them, in about a tenth of a second. Everything runs on your Mac.
+Hold Space to dictate into [Pi](https://pi.dev). Words appear in the prompt as you speak, grayed out while they are provisional. When you let go, a more accurate pass over the whole recording replaces them, in about a tenth of a second. Everything runs on your Mac.
 
 ```
  ● 0:07 ▅▆▅▇▆▄▆▆  release Space to finish · Esc to cancel
@@ -34,8 +34,8 @@ The first time you dictate, macOS asks whether your terminal may use the microph
 
 | Action | Result |
 | --- | --- |
-| Hold Space | Start listening after about half a second. Words appear at the cursor as you speak. |
-| Release Space | Replace them with the final transcript. |
+| Hold Space | Start listening after about half a second. Words appear at the cursor as you speak, in gray. |
+| Release Space | Replace them with the final transcript, in normal text. |
 | Esc while holding | Discard the recording and its words. |
 | Any other key while holding | Finish, and type that key after the transcript. |
 | Enter right after releasing | Send the prompt once the final transcript is in. |
@@ -82,6 +82,8 @@ The extension starts a small native helper, `pi-hold-to-talk-helper`, once per P
 - It opens the microphone, and watches the Space key, only between `start` and `stop`.
 - While you speak, it streams audio through Nemotron and sends `partial` events.
 - When you release, it runs Parakeet Ultra over the whole recording and sends a `final` event.
+
+The models punctuate mostly from intonation, so a question read flat can end in a period. Before the final text goes in, a small rule pass adds the "?" (and the "¿" in Spanish) to sentences whose opening words make them unmistakably questions, such as "Can you…", "Why is…", "Puedes revisar…" or "…, right". It never changes a "?" or "!" the model wrote.
 
 The protocol is defined in [`src/protocol.ts`](src/protocol.ts) and [`helper/Sources/HoldToTalkHelper/Protocol.swift`](helper/Sources/HoldToTalkHelper/Protocol.swift).
 
