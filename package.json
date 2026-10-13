@@ -36,7 +36,8 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ]
+    ],
+    "video": "https://github.com/JoaquinCampo/pi-hold-to-talk/raw/refs/heads/main/docs/demo.mp4"
   },
   "files": [
     "src",

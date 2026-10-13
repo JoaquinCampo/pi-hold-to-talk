@@ -2,6 +2,8 @@
 
 Hold Space to dictate into [Pi](https://pi.dev). Words appear in the prompt as you speak, grayed out while they are provisional. When you let go, a more accurate pass over the whole recording replaces them, in about a tenth of a second. Everything runs on your Mac.
 
+[Watch the 10-second demo](docs/demo.mp4)
+
 ```
  ● 0:07 ▅▆▅▇▆▄▆▆  release Space to finish · Esc to cancel
 ──────────────────────────────────────────────────────────────────────────────
