@@ -4,12 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { type HoldToTalkConfig, loadConfig, parseModelRef } from "./config.ts";
+import { type HoldToTalkConfig, loadConfig } from "./config.ts";
 import { Dictation } from "./dictation.ts";
 import { asDictationTarget } from "./editor.ts";
 import { findHelper, HELPER_NAME, type HelperLike, HelperProcess, helperCandidates, MissingHelper } from "./helper.ts";
 import { type HoldTiming, holdTiming } from "./hold-detector.ts";
-import { polishTranscript } from "./polish.ts";
 import { WidgetHost } from "./widget.ts";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -108,7 +107,7 @@ function attach(ctx: ExtensionContext, helper: HelperLike, config: HoldToTalkCon
       notify: (message, type) => ctx.ui.notify(message, type),
       focusedTarget: () => asDictationTarget(widget.focused()),
     },
-    { timing, maxSeconds: config.maxSeconds, polish: polisher(ctx, config) },
+    { timing, maxSeconds: config.maxSeconds, livePreview: config.livePreview },
   );
   const log = debugLog();
   const unsubscribe = ctx.ui.onTerminalInput((data) => {
@@ -122,21 +121,6 @@ function attach(ctx: ExtensionContext, helper: HelperLike, config: HoldToTalkCon
       dictation.dispose();
       widget.dispose();
     },
-  };
-}
-
-function polisher(ctx: ExtensionContext, config: HoldToTalkConfig): ((raw: string) => Promise<string>) | undefined {
-  const ref = config.polishModel ? parseModelRef(config.polishModel) : undefined;
-  if (!ref) return undefined;
-  let reported = false;
-  return async (raw) => {
-    const model = ctx.modelRegistry.find(ref.provider, ref.id);
-    if (!model) {
-      if (!reported) ctx.ui.notify(`hold-to-talk: polish model ${config.polishModel} is not available; inserting raw text`, "warning");
-      reported = true;
-      return raw;
-    }
-    return polishTranscript(ctx.modelRegistry, model, raw, config.vocabulary, config.polishTimeoutMs);
   };
 }
 
@@ -179,7 +163,7 @@ function describeStatus(enabled: boolean, helper: HelperLike | undefined, config
   const binary = findHelper(helperCandidates(PACKAGE_ROOT, config.helperPath)) ?? `${HELPER_NAME} not found`;
   return [
     `Dictation ${enabled ? "on" : "off"} · helper ${state}`,
-    `Language ${config.language} · polish ${config.polishModel ?? "off"} · live preview ${config.livePreview ? "on" : "off"}`,
+    `Language ${config.language} · live preview ${config.livePreview ? "on" : "off"}`,
     `Helper ${binary}`,
     `Settings ${configFile}`,
   ].join("\n");

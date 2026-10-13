@@ -53,6 +53,8 @@ enum Event: Encodable {
     case ready(streaming: Bool)
     /// The microphone is open.
     case listening
+    /// The physical Space key was released. Only sent when key state is readable.
+    case keyReleased
     /// Input loudness in [0, 1], mapped from -60 to 0 dBFS. Roughly ten updates a second.
     case level(Double)
     /// Live text for the audio so far. Each partial replaces the previous one.
@@ -81,6 +83,8 @@ enum Event: Encodable {
             try container.encode(streaming, forKey: .streaming)
         case .listening:
             try container.encode("listening", forKey: .type)
+        case .keyReleased:
+            try container.encode("keyReleased", forKey: .type)
         case let .level(level):
             try container.encode("level", forKey: .type)
             try container.encode(level, forKey: .level)

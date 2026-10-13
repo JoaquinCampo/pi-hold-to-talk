@@ -1,20 +1,18 @@
 # pi-hold-to-talk
 
-Hold Space to dictate into [Pi](https://pi.dev). Speech recognition runs on your Mac. Words appear as you speak, and the full transcript is inserted at the cursor when you let go. If you choose a model for it, that model tidies the transcript first.
+Hold Space to dictate into [Pi](https://pi.dev). Words appear in the prompt as you speak. When you let go, a more accurate pass over the whole recording replaces them, in about a tenth of a second. Everything runs on your Mac.
 
 ```
- ● 0:07 ▅▆▅▇▆▄▆▆  release Space to insert · Esc to cancel
-   …look at the header and make it take less vertical space. Also check the
+ ● 0:07 ▅▆▅▇▆▄▆▆  release Space to finish · Esc to cancel
 ──────────────────────────────────────────────────────────────────────────────
-  Please
+  Please look at the header and make it take less vertical space. Also check
 ```
 
-- **On device.** Audio never leaves your machine. Two models run on the Apple Neural Engine through [FluidAudio](https://github.com/FluidInference/FluidAudio):
-  - **Nemotron 3.5 Streaming** for the live preview;
-  - **Parakeet Ultra** for the final text.
-- **Fast.** The final pass on 10 seconds of speech takes about 0.1 s, so text lands about half a second after you let go.
-- **Multilingual.** Covers 25 European languages, detected automatically or pinned in the settings.
-- **Optional polish.** Any model available in Pi can remove filler words, apply self-corrections ("the footer, no wait, the header") and spell your project vocabulary right. Only this step sends text anywhere.
+- **Fully local.** Audio and text never leave your machine. Two NVIDIA models run on the Apple Neural Engine through [FluidAudio](https://github.com/FluidInference/FluidAudio):
+  - **Nemotron 3.5 Streaming** writes the live words;
+  - **Parakeet Ultra** writes the final text.
+- **Instant release.** The helper watches the Space key itself, so it knows the moment you let go. The final pass over 10 seconds of speech takes about 0.1 s.
+- **Multilingual.** The final pass covers 25 European languages, detected automatically or pinned in the settings. The live words cover English, Spanish, French, Italian, Portuguese and German.
 
 ## Requirements
 
@@ -36,12 +34,15 @@ The first time you dictate, macOS asks whether your terminal may use the microph
 
 | Action | Result |
 | --- | --- |
-| Hold Space | Start listening after about half a second. |
-| Release Space | Insert the transcript at the cursor. |
-| Esc while holding | Discard the recording. |
-| Any other key while holding | Finish, and type that key. |
+| Hold Space | Start listening after about half a second. Words appear at the cursor as you speak. |
+| Release Space | Replace them with the final transcript. |
+| Esc while holding | Discard the recording and its words. |
+| Any other key while holding | Finish, and type that key after the transcript. |
+| Enter right after releasing | Send the prompt once the final transcript is in. |
 
-Tapping Space types spaces as usual. A hold is recognised by the keyboard's auto-repeat, so the spaces typed while the hold is being detected are removed again. Terminals that support the kitty keyboard protocol report the release exactly; others are taken as released when the repeats stop.
+Tapping Space types spaces as usual. A hold is recognised by the keyboard's auto-repeat, so the spaces typed while the hold is being detected are removed again.
+
+The release is read from the key itself while you dictate; nothing watches the keyboard at any other time. If macOS does not allow that, the release is taken from the terminal instead: exact in terminals that support the kitty keyboard protocol, and otherwise when the auto-repeat stops, about half a second later.
 
 Dictation only starts when the prompt editor has focus. Holding Space in a picker, dialog or overlay does what it normally does.
 
@@ -57,9 +58,8 @@ Create `~/.pi/agent/hold-to-talk.json`. Every key is optional:
 
 ```json
 {
-  "language": "auto",
-  "polishModel": "openai-codex/gpt-5.6-luna",
-  "vocabulary": ["FluidAudio", "Nemotron", "pi-subagents"]
+  "language": "es",
+  "previewChunkMs": 1120
 }
 ```
 
@@ -67,11 +67,8 @@ Create `~/.pi/agent/hold-to-talk.json`. Every key is optional:
 | --- | --- | --- |
 | `enabled` | `true` | Dictate when holding Space. |
 | `language` | `"auto"` | A language code (`"en"`, `"es"`, `"pt-BR"`, …) sharpens recognition when you always speak one language. |
-| `livePreview` | `true` | Show text while speaking. Turning it off skips loading the streaming model. |
-| `previewChunkMs` | `560` | Preview granularity: `560`, `1120`, `2240` or `4480`. Smaller updates more often. |
-| `polishModel` | `null` | `"provider/model-id"` of the model that tidies transcripts. A small, fast model works best. `null` inserts the raw transcript. |
-| `polishTimeoutMs` | `4000` | Insert the raw transcript if polishing takes longer. |
-| `vocabulary` | `[]` | Names to spell exactly. Used by the polish step. |
+| `livePreview` | `true` | Write words while speaking. Turning it off skips loading the streaming model; text then appears on release. |
+| `previewChunkMs` | `560` | How often live words update: `560`, `1120`, `2240` or `4480` ms. |
 | `maxSeconds` | `300` | Stop listening after this long. |
 | `helperPath` | `null` | Use a different helper binary. |
 
@@ -82,7 +79,7 @@ Changes apply when Pi starts.
 The extension starts a small native helper, `pi-hold-to-talk-helper`, once per Pi process and talks to it over JSON lines on stdin and stdout:
 
 - The helper keeps both models loaded, using about 60 MB of memory.
-- It opens the microphone only between `start` and `stop`.
+- It opens the microphone, and watches the Space key, only between `start` and `stop`.
 - While you speak, it streams audio through Nemotron and sends `partial` events.
 - When you release, it runs Parakeet Ultra over the whole recording and sends a `final` event.
 

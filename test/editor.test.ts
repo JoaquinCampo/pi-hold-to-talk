@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asDictationTarget, eraseSpacesBeforeCursor, insertDictation } from "../src/editor.ts";
+import { asDictationTarget, eraseSpacesBeforeCursor, LiveText } from "../src/editor.ts";
 import { FakeEditor } from "./fakes.ts";
 
 test("recognises editor-like components only", () => {
@@ -18,16 +18,45 @@ test("erases leaked spaces before the cursor, never more", () => {
   assert.equal(short.text, "word", "stops at the first non-space");
 });
 
-test("inserts at the cursor, separated from a preceding word", () => {
+test("live text edits only what changed, at the cursor", () => {
   const editor = new FakeEditor("please  now", 6);
-  insertDictation(editor, "check the header");
+  const live = new LiveText(editor);
+  live.update("check the");
+  assert.equal(editor.text, "please check the  now");
+  const backspaces = editor.backspaces;
+  live.update("check the header");
   assert.equal(editor.text, "please check the header  now");
+  assert.equal(editor.backspaces, backspaces, "appending needs no deletion");
+  live.update("Check the header.");
+  assert.equal(editor.text, "please Check the header.  now");
+  assert.equal(live.text, "Check the header.");
+  live.update("");
+  assert.equal(editor.text, "please  now", "clearing removes the separator too");
+});
 
+test("live text needs no separator after a space or at the start", () => {
   const empty = new FakeEditor();
-  insertDictation(empty, "Hello.");
+  new LiveText(empty).update("Hello.");
   assert.equal(empty.text, "Hello.");
-
   const afterSpace = new FakeEditor("Then ");
-  insertDictation(afterSpace, "ship it");
+  new LiveText(afterSpace).update("ship it");
   assert.equal(afterSpace.text, "Then ship it");
+});
+
+test("live text leaves the editor alone once the person moved on", () => {
+  const editor = new FakeEditor("Note:");
+  const live = new LiveText(editor);
+  live.update("first draft");
+  editor.handleInput("!");
+  assert.equal(live.intact, false);
+  assert.equal(live.update("final"), false);
+  assert.equal(editor.text, "Note: first draft!");
+});
+
+test("live text deletes whole characters", () => {
+  const editor = new FakeEditor();
+  const live = new LiveText(editor);
+  live.update("café 👍🏽");
+  live.update("café");
+  assert.equal(editor.text, "café");
 });

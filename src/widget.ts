@@ -1,14 +1,13 @@
 import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
-import { type Component, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 
 export type View =
   | { kind: "hidden" }
   /** Space is held but the models are still loading. */
   | { kind: "loading"; percent: number | undefined }
-  /** `live` turns true once the microphone is confirmed open. */
-  | { kind: "listening"; live: boolean; startedAt: number; levels: readonly number[]; preview: string }
+  /** `micOpen` turns true once the helper confirms the microphone is recording. */
+  | { kind: "listening"; micOpen: boolean; startedAt: number; levels: readonly number[] }
   | { kind: "transcribing" }
-  | { kind: "polishing"; text: string }
   | { kind: "notice"; text: string; tone: "muted" | "error" };
 
 type Painter = Pick<Theme, "fg">;
@@ -27,15 +26,6 @@ export function clock(ms: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-/** The end of `text` that fits in `width` columns, marked with a leading ellipsis when cut. */
-export function tail(text: string, width: number): string {
-  if (visibleWidth(text) <= width) return text;
-  const chars = Array.from(text);
-  let start = chars.length;
-  while (start > 0 && visibleWidth(chars.slice(start - 1).join("")) <= width - 1) start--;
-  return `…${chars.slice(start).join("")}`;
-}
-
 export function renderView(view: View, theme: Painter, width: number, now: number): string[] {
   const line = (text: string) => truncateToWidth(text, width);
   switch (view.kind) {
@@ -46,16 +36,12 @@ export function renderView(view: View, theme: Painter, width: number, now: numbe
       return [line(`${theme.fg("accent", " ◌ ")}${theme.fg("muted", `Loading speech models${progress}…`)}`)];
     }
     case "listening": {
-      const dot = theme.fg(view.live ? "error" : "dim", " ● ");
+      const dot = theme.fg(view.micOpen ? "error" : "dim", " ● ");
       const status = `${dot}${theme.fg("text", clock(now - view.startedAt))} ${theme.fg("accent", meter(view.levels))}`;
-      const lines = [line(`${status}${theme.fg("dim", "  release Space to insert · Esc to cancel")}`)];
-      if (view.preview) lines.push(line(`   ${theme.fg("muted", tail(view.preview, width - 4))}`));
-      return lines;
+      return [line(`${status}${theme.fg("dim", "  release Space to finish · Esc to cancel")}`)];
     }
     case "transcribing":
       return [line(`${theme.fg("accent", " ◌ ")}${theme.fg("muted", "Transcribing…")}`)];
-    case "polishing":
-      return [line(`${theme.fg("accent", " ✎ ")}${theme.fg("muted", tail(view.text, width - 4))}`)];
     case "notice":
       return [line(`${theme.fg(view.tone === "error" ? "error" : "dim", " ○ ")}${theme.fg("muted", view.text)}`)];
   }

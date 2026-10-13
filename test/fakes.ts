@@ -27,11 +27,15 @@ export class FakeEditor implements DictationTarget {
 
   /** Prompts sent with Enter. */
   readonly submitted: string[] = [];
+  backspaces = 0;
 
   handleInput(data: string): void {
     if (data === "\x7f") {
-      this.text = this.text.slice(0, this.col - 1) + this.text.slice(this.col);
-      this.col -= 1;
+      // Deletes one grapheme, like pi-tui's editor.
+      const before = [...new Intl.Segmenter().segment(this.text.slice(0, this.col))].at(-1)?.segment ?? "";
+      this.text = this.text.slice(0, this.col - before.length) + this.text.slice(this.col);
+      this.col -= before.length;
+      this.backspaces += 1;
     } else if (data === "\r") {
       this.submitted.push(this.text);
       this.text = "";

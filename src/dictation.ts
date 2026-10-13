@@ -1,7 +1,7 @@
-import { type DictationTarget, eraseSpacesBeforeCursor, insertDictation } from "./editor.ts";
+import { type DictationTarget, eraseSpacesBeforeCursor, LiveText } from "./editor.ts";
 import type { HelperLike, HelperNotice } from "./helper.ts";
 import { HoldDetector, type HoldTiming } from "./hold-detector.ts";
-import { classifyKey, type KeyEvent } from "./keys.ts";
+import { classifyKey } from "./keys.ts";
 import { METER_WIDTH, type View } from "./widget.ts";
 
 export interface DictationUI {
@@ -14,33 +14,36 @@ export interface DictationUI {
 export interface DictationOptions {
   timing: HoldTiming;
   maxSeconds: number;
-  /** Tidies a transcript. Undefined inserts transcripts as they are. */
-  polish: ((raw: string) => Promise<string>) | undefined;
+  /** Write live words into the editor while speaking. */
+  livePreview: boolean;
 }
 
 type Phase =
   | { name: "idle" }
   /** Space is held but the helper cannot listen yet; released without recording. */
   | { name: "waiting"; target: DictationTarget }
-  | { name: "listening"; target: DictationTarget; live: boolean; startedAt: number; levels: number[]; preview: string }
-  | { name: "transcribing"; target: DictationTarget }
-  | { name: "polishing"; target: DictationTarget };
+  | { name: "listening"; target: DictationTarget; text: LiveText; micOpen: boolean; startedAt: number; levels: number[] }
+  | { name: "transcribing"; target: DictationTarget; text: LiveText };
 
 const NOTICE_MS = 2500;
+/** Auto-repeat spaces already on their way when the physical key went up. */
+const TRAILING_REPEAT_MS = 150;
 const consume = { consume: true } as const;
 
 /**
- * Turns a held Space into dictation: listen while held, transcribe on release, optionally
- * polish, then insert at the cursor of the editor that had focus when the hold began.
+ * Turns a held Space into dictation. While Space is held, live words appear at the cursor;
+ * on release the final transcript replaces them.
  *
- * Keys typed between the end of a hold and the insertion (most often Enter, to send the
- * prompt) are held back and replayed after the text lands, so they act on the full prompt.
+ * Keys typed before the final transcript lands (most often Enter, to send the prompt) are
+ * held back and replayed afterwards, so they act on the finished prompt.
  */
 export class Dictation {
   enabled = true;
   private phase: Phase = { name: "idle" };
-  /** Raw input held back while the transcript is on its way. */
+  /** Raw input held back until the dictated text settles. */
   private heldKeys: string[] = [];
+  /** Swallow stray auto-repeat spaces until this time. */
+  private trailingRepeatsUntil = 0;
   private readonly detector: HoldDetector;
   private readonly unsubscribe: () => void;
   private releaseTimer: NodeJS.Timeout | undefined;
@@ -61,8 +64,15 @@ export class Dictation {
   /** Terminal input handler. Consumes the keys that drive a hold; everything else passes through. */
   handleInput(data: string): { consume: true } | undefined {
     const key = classifyKey(data);
-    if (this.phase.name === "transcribing" || this.phase.name === "polishing") {
-      return this.whileBusy(this.phase.target, data, key);
+    if (key.key === "space" && Date.now() < this.trailingRepeatsUntil) {
+      this.trailingRepeatsUntil = Date.now() + TRAILING_REPEAT_MS;
+      return consume;
+    }
+    if (this.phase.name === "transcribing") {
+      if (key.phase === "release") return undefined;
+      // The final transcript is moments away; keys typed now wait for it.
+      this.heldKeys.push(data);
+      return consume;
     }
 
     const holding = this.detector.isHolding;
@@ -106,14 +116,6 @@ export class Dictation {
     this.ui.show({ kind: "hidden" });
   }
 
-  /** Between release and insertion: Escape drops the dictation, other keys wait for it. */
-  private whileBusy(target: DictationTarget, data: string, key: KeyEvent): { consume: true } | undefined {
-    if (key.phase === "release") return undefined;
-    if (key.key === "escape") this.settle(target, undefined);
-    else this.heldKeys.push(data);
-    return consume;
-  }
-
   private begin(target: DictationTarget): void {
     clearTimeout(this.noticeTimer);
     this.armRelease();
@@ -133,37 +135,40 @@ export class Dictation {
 
   private listen(target: DictationTarget): void {
     this.helper.send({ type: "start" });
-    this.phase = { name: "listening", target, live: false, startedAt: Date.now(), levels: [], preview: "" };
+    const text = new LiveText(target);
+    this.phase = { name: "listening", target, text, micOpen: false, startedAt: Date.now(), levels: [] };
     this.render();
   }
 
-  /** The key was let go, another key was pressed, or the time limit hit. */
+  /** Space was let go, another key was pressed, or the time limit hit. */
   private finish(): void {
     this.clearTimers();
     this.detector.end();
-    if (this.phase.name === "listening") {
+    const phase = this.phase;
+    if (phase.name === "listening") {
       this.helper.send({ type: "stop" });
-      this.phase = { name: "transcribing", target: this.phase.target };
+      this.phase = { name: "transcribing", target: phase.target, text: phase.text };
       this.ui.show({ kind: "transcribing" });
-    } else if (this.phase.name === "waiting") {
-      this.settle(this.phase.target, undefined);
+    } else if (phase.name === "waiting") {
+      this.settle();
     }
   }
 
   private cancel(): void {
     this.clearTimers();
-    if (this.phase.name === "listening") this.helper.send({ type: "cancel" });
-    if (this.phase.name === "listening" || this.phase.name === "waiting") this.settle(this.phase.target, undefined);
+    const phase = this.phase;
+    if (phase.name === "listening") {
+      this.helper.send({ type: "cancel" });
+      phase.text.update("");
+    }
+    this.settle();
   }
 
-  /** Something went wrong mid-dictation: drop it, keep what the user typed. */
+  /** Something went wrong mid-dictation. Live words already shown stay, for the person to keep or delete. */
   private abandon(message: string): void {
     this.clearTimers();
     this.detector.end();
-    const phase = this.phase;
-    if (phase.name === "listening" || phase.name === "transcribing" || phase.name === "waiting") {
-      this.settle(phase.target, undefined);
-    }
+    if (this.phase.name !== "idle") this.settle();
     this.ui.notify(message, "error");
   }
 
@@ -179,8 +184,14 @@ export class Dictation {
         break;
       case "listening":
         if (phase.name === "listening") {
-          phase.live = true;
+          phase.micOpen = true;
           this.render();
+        }
+        break;
+      case "keyReleased":
+        if (phase.name === "listening") {
+          this.trailingRepeatsUntil = Date.now() + TRAILING_REPEAT_MS;
+          this.finish();
         }
         break;
       case "level":
@@ -191,13 +202,10 @@ export class Dictation {
         }
         break;
       case "partial":
-        if (phase.name === "listening") {
-          phase.preview = notice.text;
-          this.render();
-        }
+        if (phase.name === "listening" && this.options.livePreview) phase.text.update(notice.text);
         break;
       case "final":
-        if (phase.name === "transcribing") void this.deliver(phase.target, notice.text);
+        if (phase.name === "transcribing") this.deliver(phase.text, notice.text);
         break;
       case "cancelled":
         break;
@@ -217,35 +225,21 @@ export class Dictation {
     }
   }
 
-  private async deliver(target: DictationTarget, raw: string): Promise<void> {
-    if (raw === "") {
-      this.settle(target, undefined);
-      this.notice("Didn't catch that");
-      return;
-    }
-    if (!this.options.polish) return this.settle(target, raw);
-
-    const phase: Phase = { name: "polishing", target };
-    this.phase = phase;
-    this.ui.show({ kind: "polishing", text: raw });
-    let text = raw;
-    try {
-      text = await this.options.polish(raw);
-    } catch {
-      // Polishing is a nicety: on failure or timeout the raw transcript goes in.
-    }
-    // Escape while polishing already settled this dictation.
-    if (this.phase === phase) this.settle(target, text);
+  private deliver(text: LiveText, transcript: string): void {
+    text.update(transcript);
+    this.settle();
+    if (transcript === "") this.notice("Didn't catch that");
   }
 
-  /** Ends a dictation: inserts `text` if any, then replays the keys typed while waiting for it. */
-  private settle(target: DictationTarget, text: string | undefined): void {
+  /** Ends a dictation and replays the keys typed while it finished. */
+  private settle(): void {
+    const phase = this.phase;
     this.phase = { name: "idle" };
     this.ui.show({ kind: "hidden" });
-    if (text !== undefined) insertDictation(target, text);
     const keys = this.heldKeys;
     this.heldKeys = [];
-    for (const data of keys) target.handleInput(data);
+    if (phase.name === "idle") return;
+    for (const data of keys) phase.target.handleInput(data);
   }
 
   private loadingPercent(): number | undefined {
@@ -256,13 +250,7 @@ export class Dictation {
   private render(): void {
     const phase = this.phase;
     if (phase.name !== "listening") return;
-    this.ui.show({
-      kind: "listening",
-      live: phase.live,
-      startedAt: phase.startedAt,
-      levels: phase.levels,
-      preview: phase.preview,
-    });
+    this.ui.show({ kind: "listening", micOpen: phase.micOpen, startedAt: phase.startedAt, levels: phase.levels });
   }
 
   private notice(text: string): void {

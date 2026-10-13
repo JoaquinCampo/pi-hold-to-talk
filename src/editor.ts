@@ -2,8 +2,8 @@ import type { Component } from "@earendil-works/pi-tui";
 
 /**
  * The parts of pi-tui's `Editor` that dictation uses. Going through the focused editor
- * (rather than replacing the whole prompt) inserts at the cursor as a single undo step,
- * and never turns long dictation into a collapsed paste marker.
+ * (rather than replacing the whole prompt) edits at the cursor and never turns long
+ * dictation into a collapsed paste marker.
  */
 export interface DictationTarget {
   getLines(): string[];
@@ -13,6 +13,11 @@ export interface DictationTarget {
 }
 
 const BACKSPACE = "\x7f";
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function splitGraphemes(text: string): string[] {
+  return Array.from(graphemes.segment(text), (part) => part.segment);
+}
 
 export function asDictationTarget(component: Component | null | undefined): DictationTarget | undefined {
   if (!component) return undefined;
@@ -37,8 +42,46 @@ export function eraseSpacesBeforeCursor(target: DictationTarget, count: number):
   for (let i = Math.min(count, trailing); i > 0; i--) target.handleInput(BACKSPACE);
 }
 
-/** Inserts dictated text at the cursor, separated by a space from a word right before it. */
-export function insertDictation(target: DictationTarget, text: string): void {
-  const before = textBeforeCursor(target);
-  target.insertTextAtCursor(before !== "" && !/\s$/.test(before) ? ` ${text}` : text);
+/**
+ * Dictated text kept in the editor, ending at the cursor, while it is still changing:
+ * live words while speaking, then the final transcript.
+ * Each update edits only what changed. Once the editor no longer ends with this text at
+ * the cursor (the person moved on), updates are refused and the text is left alone.
+ */
+export class LiveText {
+  private readonly target: DictationTarget;
+  /** A space that keeps the dictation off a word right before it. Part of the span. */
+  private readonly separator: string;
+  private shown = "";
+
+  constructor(target: DictationTarget) {
+    this.target = target;
+    const before = textBeforeCursor(target);
+    this.separator = before !== "" && !/\s$/.test(before) ? " " : "";
+  }
+
+  /** The dictated text currently in the editor, without the separator. */
+  get text(): string {
+    return this.shown === "" ? "" : this.shown.slice(this.separator.length);
+  }
+
+  /** Whether the editor still ends with this text at the cursor. */
+  get intact(): boolean {
+    return textBeforeCursor(this.target).endsWith(this.shown);
+  }
+
+  /** Shows `text` in place of the current dictation. Returns false when the editor moved on. */
+  update(text: string): boolean {
+    if (!this.intact) return false;
+    const next = text === "" ? "" : this.separator + text;
+    const from = splitGraphemes(this.shown);
+    const to = splitGraphemes(next);
+    let common = 0;
+    while (common < from.length && common < to.length && from[common] === to[common]) common++;
+    for (let i = from.length - common; i > 0; i--) this.target.handleInput(BACKSPACE);
+    const added = to.slice(common).join("");
+    if (added) this.target.insertTextAtCursor(added);
+    this.shown = next;
+    return true;
+  }
 }

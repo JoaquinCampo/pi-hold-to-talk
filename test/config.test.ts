@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG, loadConfig, parseModelRef, resolveConfig } from "../src/config.ts";
+import { DEFAULT_CONFIG, loadConfig, resolveConfig } from "../src/config.ts";
 
 test("defaults when there is no file", () => {
   const { config, problems } = loadConfig(path.join(os.tmpdir(), "does-not-exist", "hold-to-talk.json"));
@@ -14,15 +14,13 @@ test("defaults when there is no file", () => {
 test("applies valid settings and reports the rest", () => {
   const { config, problems } = resolveConfig({
     language: "es",
-    polishModel: "openai-codex/gpt-5.6-luna",
-    vocabulary: ["FluidAudio"],
+    livePreview: false,
     previewChunkMs: 1000,
     maxSeconds: -1,
     colour: "red",
   });
   assert.equal(config.language, "es");
-  assert.equal(config.polishModel, "openai-codex/gpt-5.6-luna");
-  assert.deepEqual(config.vocabulary, ["FluidAudio"]);
+  assert.equal(config.livePreview, false);
   assert.equal(config.previewChunkMs, DEFAULT_CONFIG.previewChunkMs);
   assert.equal(config.maxSeconds, DEFAULT_CONFIG.maxSeconds);
   assert.deepEqual(problems, [
@@ -44,11 +42,4 @@ test("reports a file that is not JSON", () => {
 
 test("rejects a non-object", () => {
   assert.deepEqual(resolveConfig([1]).problems, ["settings must be a JSON object"]);
-});
-
-test("model references split at the first slash", () => {
-  assert.deepEqual(parseModelRef("openrouter/qwen/qwen3-coder"), { provider: "openrouter", id: "qwen/qwen3-coder" });
-  assert.equal(parseModelRef("no-slash"), undefined);
-  assert.equal(parseModelRef("/leading"), undefined);
-  assert.equal(parseModelRef("trailing/"), undefined);
 });

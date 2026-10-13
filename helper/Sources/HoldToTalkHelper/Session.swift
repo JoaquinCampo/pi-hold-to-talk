@@ -13,6 +13,7 @@ actor Session {
         let input: AsyncStream<[Float]>.Continuation
         /// Collects the utterance's audio and emits levels and partials. Returns the audio.
         let pump: Task<[Float], Never>
+        let keyWatch: Task<Void, Never>
     }
 
     private let transcriber: Transcriber
@@ -64,7 +65,8 @@ actor Session {
             return events.emit(.error(code: code, message: "\(error)", fatal: false))
         }
         await transcriber.begin()
-        recording = Recording(source: source, input: input, pump: pump(stream))
+        let keyWatch = SpaceKey.watch { [events] in events.emit(.keyReleased) }
+        recording = Recording(source: source, input: input, pump: pump(stream), keyWatch: keyWatch)
         events.emit(.listening)
     }
 
@@ -95,6 +97,7 @@ actor Session {
     private func takeRecording() -> Recording? {
         guard let recording else { return nil }
         self.recording = nil
+        recording.keyWatch.cancel()
         recording.source.stop()
         recording.input.finish()
         return recording

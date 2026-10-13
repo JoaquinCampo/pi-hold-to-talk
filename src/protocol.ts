@@ -20,6 +20,8 @@ export type HelperEvent =
   | { type: "ready"; protocolVersion: number; streaming: boolean }
   /** The microphone is open. */
   | { type: "listening" }
+  /** The physical Space key went up. Only sent where key state is readable. */
+  | { type: "keyReleased" }
   /** Input loudness in [0, 1], about ten times a second. */
   | { type: "level"; level: number }
   /** Live text for the audio so far; replaces the previous partial. */
@@ -36,6 +38,7 @@ const SHAPES: { [K in HelperEvent["type"]]: Record<string, FieldType> } = {
   loading: { model: "string", fraction: "number" },
   ready: { protocolVersion: "number", streaming: "boolean" },
   listening: {},
+  keyReleased: {},
   level: { level: "number" },
   partial: { text: "string" },
   final: { text: "string", audioMs: "number", transcribeMs: "number" },

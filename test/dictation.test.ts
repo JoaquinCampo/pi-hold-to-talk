@@ -10,47 +10,48 @@ const T0 = 1_000_000;
 beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "Date"], now: T0 }));
 afterEach(() => mock.timers.reset());
 
-function setup(options: Partial<DictationOptions> = {}, editor: FakeEditor | null = new FakeEditor("Please ")) {
+function setup(options: Partial<DictationOptions> = {}, editor: FakeEditor | null = new FakeEditor("Please")) {
   const helper = new FakeHelper();
   const views: View[] = [];
   const notices: string[] = [];
   const dictation = new Dictation(
     helper,
     { show: (view) => views.push(view), notify: (message) => notices.push(message), focusedTarget: () => editor ?? undefined },
-    { timing: holdTiming(), maxSeconds: 300, polish: undefined, ...options },
+    { timing: holdTiming(), maxSeconds: 300, livePreview: true, ...options },
   );
   /** Sends raw input like the terminal would, applying unconsumed keys to the editor. */
   const type = (data: string) => {
     const result = dictation.handleInput(data);
-    if (!result?.consume && editor && data.length === 1 && data !== "\x1b") editor.insertTextAtCursor(data);
+    if (!result?.consume && editor && data.length === 1 && data !== "\x1b") editor.handleInput(data);
     return result;
   };
-  /** Holds Space for `ms`: a press, the first repeat after 375 ms, then one every 90 ms. */
+  /** Holds Space for about `ms`: a press, the first repeat after 375 ms, then one every 90 ms. */
   const holdSpace = (ms: number) => {
     type(" ");
-    let elapsed = 375;
     mock.timers.tick(375);
-    while (elapsed <= ms) {
+    for (let elapsed = 375; elapsed <= ms; elapsed += 90) {
       type(" ");
       mock.timers.tick(90);
-      elapsed += 90;
     }
   };
   const lastView = () => views.at(-1);
   return { helper, dictation, editor, views, notices, type, holdSpace, lastView };
 }
 
-test("hold, speak, release: the transcript lands at the cursor", () => {
+test("hold, speak, release: live words, then the final transcript, in the prompt", () => {
   const { helper, editor, holdSpace, lastView } = setup();
   holdSpace(1500);
   assert.deepEqual(helper.sent, ["start"]);
-  assert.equal(editor?.text, "Please ", "the spaces typed by the hold are erased");
+  assert.equal(editor?.text, "Please", "the spaces typed by the hold are erased");
 
   helper.emit({ type: "listening" });
   helper.emit({ type: "level", level: 0.5 });
-  helper.emit({ type: "partial", text: "check the" });
   // The fourth quick repeat starts the hold: 375 ms initial delay plus three 90 ms repeats.
-  assert.deepEqual(lastView(), { kind: "listening", live: true, startedAt: T0 + 645, levels: [0.5], preview: "check the" });
+  assert.deepEqual(lastView(), { kind: "listening", micOpen: true, startedAt: T0 + 645, levels: [0.5] });
+  helper.emit({ type: "partial", text: "check the" });
+  assert.equal(editor?.text, "Please check the");
+  helper.emit({ type: "partial", text: "check the head" });
+  assert.equal(editor?.text, "Please check the head");
 
   mock.timers.tick(450); // no more repeats: the key was let go
   assert.deepEqual(helper.sent, ["start", "stop"]);
@@ -61,9 +62,32 @@ test("hold, speak, release: the transcript lands at the cursor", () => {
   assert.deepEqual(lastView(), { kind: "hidden" });
 });
 
+test("the physical key release finishes at once and swallows repeats in flight", () => {
+  const { helper, editor, holdSpace, type } = setup();
+  holdSpace(1000);
+  helper.emit({ type: "keyReleased" });
+  assert.deepEqual(helper.sent, ["start", "stop"], "no waiting for the repeats to stop");
+  assert.deepEqual(type(" "), { consume: true });
+  helper.emit({ type: "final", text: "Done.", audioMs: 1000, transcribeMs: 50 });
+  assert.equal(editor?.text, "Please Done.");
+  mock.timers.tick(200);
+  assert.equal(type(" "), undefined, "a later space is typed normally");
+  assert.equal(editor?.text, "Please Done. ");
+});
+
+test("without live preview, the text appears only on release", () => {
+  const { helper, editor, holdSpace } = setup({ livePreview: false });
+  holdSpace(1000);
+  helper.emit({ type: "partial", text: "check" });
+  assert.equal(editor?.text, "Please");
+  mock.timers.tick(450);
+  helper.emit({ type: "final", text: "Check.", audioMs: 1000, transcribeMs: 50 });
+  assert.equal(editor?.text, "Please Check.");
+});
+
 test("typing spaces is left alone", () => {
   const { helper, editor, type } = setup();
-  for (const char of "a b  c") {
+  for (const char of " a b  c") {
     type(char);
     mock.timers.tick(160);
   }
@@ -71,13 +95,15 @@ test("typing spaces is left alone", () => {
   assert.deepEqual(helper.sent, []);
 });
 
-test("Escape cancels without inserting anything", () => {
+test("Escape while holding removes the live words", () => {
   const { helper, editor, holdSpace, type, lastView } = setup();
   holdSpace(1000);
+  helper.emit({ type: "partial", text: "never mind" });
   assert.deepEqual(type("\x1b"), { consume: true });
   assert.deepEqual(helper.sent, ["start", "cancel"]);
+  assert.equal(editor?.text, "Please");
   helper.emit({ type: "final", text: "too late", audioMs: 0, transcribeMs: 0 });
-  assert.equal(editor?.text, "Please ");
+  assert.equal(editor?.text, "Please");
   assert.deepEqual(lastView(), { kind: "hidden" });
 });
 
@@ -90,7 +116,7 @@ test("another key finishes the hold and is typed after the transcript", () => {
   assert.equal(editor?.text, "Please Ship it!");
 });
 
-test("Enter pressed before the transcript lands sends the whole prompt", () => {
+test("Enter pressed before the text settles sends the whole prompt", () => {
   const { helper, editor, holdSpace, type } = setup();
   holdSpace(1000);
   mock.timers.tick(450);
@@ -100,49 +126,19 @@ test("Enter pressed before the transcript lands sends the whole prompt", () => {
   assert.deepEqual(editor?.submitted, ["Please Fix the header."]);
 });
 
-test("Escape while polishing drops the dictation but keeps typed keys", async () => {
-  let finishPolish: (text: string) => void = () => {};
-  const polish = () => new Promise<string>((resolve) => (finishPolish = resolve));
-  const { helper, editor, holdSpace, type, lastView } = setup({ polish });
-  holdSpace(1000);
-  mock.timers.tick(450);
-  helper.emit({ type: "final", text: "um fix it", audioMs: 1000, transcribeMs: 50 });
-  type("x");
-  assert.deepEqual(type("\x1b"), { consume: true });
-  assert.equal(editor?.text, "Please x");
-  assert.deepEqual(lastView(), { kind: "hidden" });
-  finishPolish("Fix it.");
-  await new Promise(setImmediate);
-  assert.equal(editor?.text, "Please x", "a late polish result is ignored");
-});
-
 test("does nothing when the editor does not have focus", () => {
   const { helper, holdSpace } = setup({}, null);
   holdSpace(1500);
   assert.deepEqual(helper.sent, []);
 });
 
-test("polishes before inserting, and falls back to the raw text", async () => {
-  for (const [polish, expected] of [
-    [async () => "Fix the header.", "Please Fix the header."],
-    [async () => Promise.reject(new Error("timeout")), "Please um fix the header"],
-  ] as const) {
-    const { helper, editor, holdSpace, lastView } = setup({ polish });
-    holdSpace(1000);
-    mock.timers.tick(450);
-    helper.emit({ type: "final", text: "um fix the header", audioMs: 1000, transcribeMs: 50 });
-    assert.deepEqual(lastView(), { kind: "polishing", text: "um fix the header" });
-    await new Promise(setImmediate);
-    assert.equal(editor?.text, expected);
-  }
-});
-
-test("silence shows a short notice and inserts nothing", () => {
+test("silence shows a short notice and leaves the prompt as it was", () => {
   const { helper, editor, holdSpace, lastView } = setup();
   holdSpace(1000);
+  helper.emit({ type: "partial", text: "uh" });
   mock.timers.tick(450);
   helper.emit({ type: "final", text: "", audioMs: 1000, transcribeMs: 10 });
-  assert.equal(editor?.text, "Please ");
+  assert.equal(editor?.text, "Please");
   assert.deepEqual(lastView(), { kind: "notice", text: "Didn't catch that", tone: "muted" });
   mock.timers.tick(2500);
   assert.deepEqual(lastView(), { kind: "hidden" });
@@ -165,6 +161,15 @@ test("a microphone error resets and explains", () => {
   helper.emit({ type: "error", code: "microphone_denied", message: "denied", fatal: false });
   assert.deepEqual(lastView(), { kind: "hidden" });
   assert.match(notices[0] ?? "", /Privacy & Security > Microphone/);
+});
+
+test("a helper crash keeps the words already shown", () => {
+  const { helper, editor, notices, holdSpace } = setup();
+  holdSpace(1000);
+  helper.emit({ type: "partial", text: "half a thought" });
+  helper.emit({ type: "exit", message: "speech helper exited with code 3" });
+  assert.equal(editor?.text, "Please half a thought");
+  assert.match(notices[0] ?? "", /Dictation stopped/);
 });
 
 test("stops listening at the time limit", () => {

@@ -4,8 +4,8 @@
 
 First release.
 
-- Hold Space to dictate into the prompt editor, with a live preview and level meter above it.
-- On-device recognition: Nemotron 3.5 Streaming for the preview, Parakeet Ultra for the final text.
-- Optional polish through any model available in Pi, with a vocabulary list.
-- Exact key release on terminals with the kitty keyboard protocol; auto-repeat detection elsewhere.
+- Hold Space to dictate: live words appear in the prompt, and the final transcript replaces them on release.
+- Fully local recognition: Nemotron 3.5 Streaming for live words, Parakeet Ultra for the final text.
+- Instant release, read from the Space key while dictating. Falls back to the kitty keyboard protocol or auto-repeat detection.
+- Keys pressed right after releasing, such as Enter, act on the finished prompt.
 - Dictation only starts when the prompt editor has focus.

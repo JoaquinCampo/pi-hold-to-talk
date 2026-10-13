@@ -7,16 +7,10 @@ export interface HoldToTalkConfig {
   enabled: boolean;
   /** "auto", or a language code such as "en", "es" or "pt-BR". */
   language: string;
-  /** Show live text in a widget while speaking. */
+  /** Write live words into the prompt while speaking. */
   livePreview: boolean;
   /** Streaming chunk size. Smaller updates more often. */
   previewChunkMs: (typeof PREVIEW_CHUNK_MS)[number];
-  /** Model that tidies the transcript, as "provider/model-id". Null inserts the raw transcript. */
-  polishModel: string | null;
-  /** Give up on polishing after this long and insert the raw transcript. */
-  polishTimeoutMs: number;
-  /** Names and terms to spell exactly. Used by the polish step. */
-  vocabulary: string[];
   /** Stop listening after this many seconds. */
   maxSeconds: number;
   /** Path to a helper binary, overriding the bundled one. */
@@ -28,9 +22,6 @@ export const DEFAULT_CONFIG: Readonly<HoldToTalkConfig> = Object.freeze({
   language: "auto",
   livePreview: true,
   previewChunkMs: 560,
-  polishModel: null,
-  polishTimeoutMs: 4000,
-  vocabulary: [],
   maxSeconds: 300,
   helperPath: null,
 });
@@ -53,16 +44,13 @@ const CHECKS: { [K in keyof HoldToTalkConfig]: [Check, string] } = {
   language: [isString, `"auto" or a language code`],
   livePreview: [isBoolean, "true or false"],
   previewChunkMs: [(value) => PREVIEW_CHUNK_MS.includes(value as never), PREVIEW_CHUNK_MS.join(", ")],
-  polishModel: [(value) => value === null || (typeof value === "string" && parseModelRef(value) !== undefined), `null or "provider/model-id"`],
-  polishTimeoutMs: [isPositiveNumber, "a positive number"],
-  vocabulary: [(value) => Array.isArray(value) && value.every(isString), "a list of strings"],
   maxSeconds: [(value) => isPositiveNumber(value) && (value as number) <= 600, "a number up to 600"],
   helperPath: [isNullableString, "null or a path"],
 };
 
 /** Validates raw settings over the defaults. Unknown keys and invalid values are reported, not fatal. */
 export function resolveConfig(raw: unknown): LoadedConfig {
-  const config: HoldToTalkConfig = { ...DEFAULT_CONFIG, vocabulary: [] };
+  const config: HoldToTalkConfig = { ...DEFAULT_CONFIG };
   const problems: string[] = [];
   if (raw === undefined) return { config, problems };
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -97,11 +85,4 @@ export function loadConfig(file: string): LoadedConfig {
   } catch (error) {
     return { ...resolveConfig(undefined), problems: [`${file} is not valid JSON: ${(error as Error).message}`] };
   }
-}
-
-/** Splits "provider/model-id" at the first slash; model ids may contain slashes themselves. */
-export function parseModelRef(ref: string): { provider: string; id: string } | undefined {
-  const slash = ref.indexOf("/");
-  if (slash <= 0 || slash === ref.length - 1) return undefined;
-  return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
 }
